@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DiariesService } from './diaries.service';
 import { DiariesController } from './diaries.controller';
 import { Diary } from './entities/diary.entity';
-import { UsersModule } from '../../../users/users.module';
+import { UsersModule } from '../users/users.module';
 import { AiModule } from '../ai/ai.module';
 
 @Module({

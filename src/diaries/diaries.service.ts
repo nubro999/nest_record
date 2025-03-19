@@ -1,11 +1,10 @@
-// diaries/diaries.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { Diary } from './entities/diary.entity.js';
 import { CreateDiaryDto } from './dto/create-diary.dto.js';
 import { UpdateDiaryDto } from './dto/update-diary.dto';
-import { UsersService } from '../../../users/users.service.js';
+import { UsersService } from '../users/users.service';
 import { AiService } from '../ai/ai.service';
 
 @Injectable()
@@ -15,6 +14,7 @@ export class DiariesService {
     private diariesRepository: Repository<Diary>,
     private usersService: UsersService,
     private aiService: AiService,
+    private dataSource: DataSource, // DataSource 주입 추가
   ) {}
 
   async create(userId: number, createDiaryDto: CreateDiaryDto): Promise<Diary> {
@@ -70,33 +70,31 @@ export class DiariesService {
   }
 
   async createWithTransaction(userId: number, createDiaryDto: CreateDiaryDto): Promise<Diary> {
-  const queryRunner = this.dataSource.createQueryRunner();
-  
-  await queryRunner.connect();
-  await queryRunner.startTransaction();
-  
-  try {
-    const user = await this.usersService.findOne(userId);
+    const queryRunner = this.dataSource.createQueryRunner();
     
-    const diary = queryRunner.manager.create(Diary, {
-      ...createDiaryDto,
-      date: new Date(createDiaryDto.date),
-      user,
-    });
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
     
-    const savedDiary = await queryRunner.manager.save(diary);
-    
-    // 다른 관련 작업들...
-    
-    await queryRunner.commitTransaction();
-    return savedDiary;
-  } catch (err) {
-    await queryRunner.rollbackTransaction();
-    throw err;
-  } finally {
-    await queryRunner.release();
+    try {
+      const user = await this.usersService.findOne(userId);
+      
+      const diary = queryRunner.manager.create(Diary, {
+        ...createDiaryDto,
+        date: new Date(createDiaryDto.date),
+        user,
+      });
+      
+      const savedDiary = await queryRunner.manager.save(diary);
+      
+      // 다른 관련 작업들...
+      
+      await queryRunner.commitTransaction();
+      return savedDiary;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
   }
 }
-}
-
-

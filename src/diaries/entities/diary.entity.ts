@@ -1,7 +1,6 @@
 // diaries/entities/diary.entity.ts
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
-import { User } from '../../../../users/entities/user.entity';
-
+import { User } from '../../users/entities/user.entity';
 @Entity()
 export class Diary {
   @PrimaryGeneratedColumn()
