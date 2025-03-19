@@ -1,39 +1,29 @@
-// diaries/entities/diary.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+
 @Entity()
 export class Diary {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column('simple-array')
-  keywords: string[];
+  @Column()
+  title: string;
 
-  @Column('json')
-  summary: {
-    morning: string;
-    afternoon: string;
-    night: string;
-  };
-
-  @Column({ nullable: true })
-  question: string;
-
-  @Column('json')
-  feelings: {
-    emotion: string;
-    reason: string;
-  };
+  @Column()
+  content: string;
 
   @Column({ type: 'date' })
   date: Date;
 
-  @ManyToOne(() => User, user => user.diaries)
+  @ManyToOne(() => User, (user) => user.diaries)
+  @JoinColumn()
   user: User;
 
-  @CreateDateColumn()
-  createdAt: Date;
+  // AI 분석 결과를 저장할 필드 추가
+  @Column({ type: 'json', nullable: true })
+  analysis: any;
 
-  @UpdateDateColumn()
-  updatedAt: Date;
+  // 분석 수행 여부를 저장하는 필드 (선택사항)
+  @Column({ default: false })
+  isAnalyzed: boolean;
 }

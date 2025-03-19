@@ -43,4 +43,5 @@ export class DiariesController {
     const userId = req.user?.id || 1; // 테스트용 기본 사용자 ID
     return this.diariesService.getAiAnalysis(+id, userId);
   }
+  
 }
