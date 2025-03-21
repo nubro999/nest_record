@@ -1,5 +1,5 @@
 // users/users.service.ts
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -8,11 +8,34 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
   ) {}
+  
+  // Create a test user when the application starts
+  async onModuleInit() {
+    try {
+      // Check if test user already exists
+      const testUser = await this.findOneByUsername('testuser');
+      
+      if (!testUser) {
+        console.log('Creating test user...');
+        // Create a test user for development
+        await this.create({
+          username: 'testuser',
+          email: 'test@example.com',
+          password: 'password123'
+        });
+        console.log('Test user created successfully');
+      } else {
+        console.log('Test user already exists');
+      }
+    } catch (error) {
+      console.error('Error creating test user:', error);
+    }
+  }
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     const existingUser = await this.usersRepository.findOne({ 
@@ -21,6 +44,14 @@ export class UsersService {
     
     if (existingUser) {
       throw new ConflictException('Username already exists');
+    }
+
+    const existingEmail = await this.usersRepository.findOne({
+      where: { email: createUserDto.email }
+    });
+
+    if (existingEmail) {
+      throw new ConflictException('Email already in use');
     }
 
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
@@ -48,6 +79,20 @@ export class UsersService {
     }
     
     return user;
+  }
+
+  async findOneByUsername(username: string): Promise<User | null> {
+    console.log(`Looking up user by username: ${username}`);
+    return this.usersRepository.findOne({ 
+      where: { username } 
+    });
+  }
+
+  async findOneByEmail(email: string): Promise<User | null> {
+    console.log(`Looking up user by email: ${email}`);
+    return this.usersRepository.findOne({ 
+      where: { email } 
+    });
   }
 
   async findByUsername(username: string): Promise<User> {

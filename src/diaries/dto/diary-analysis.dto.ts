@@ -8,7 +8,7 @@ export class DiaryAnalysisDto {
   summary: {
     morning: string;
     afternoon: string;
-    night: string;
+    evening: string; // Changed from 'night' to 'evening' to be consistent
   };
 
   @IsOptional()
