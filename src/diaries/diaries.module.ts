@@ -5,7 +5,7 @@ import { DiariesService } from './diaries.service';
 import { DiariesController } from './diaries.controller';
 import { Diary } from './entities/diary.entity';
 import { UsersModule } from '../users/users.module';
-import { OpenAiModule } from 'src/openai/openai.module';
+import { OpenAiModule } from '../openai/openai.module';
 
 @Module({
   imports: [

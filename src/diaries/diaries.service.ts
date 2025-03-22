@@ -85,6 +85,7 @@ export class DiariesService {
 
   async getAiAnalysis(id: number, userId: number): Promise<any> {
     const diary = await this.findOne(id, userId);
+    console.log("start getAiAnalysis");
     
     // 이미 분석이 수행되었고 결과가 있는 경우 저장된 분석 결과를 반환
     if (diary.isAnalyzed && diary.analysis) {
@@ -93,8 +94,19 @@ export class DiariesService {
     }
     
     try {
-      const dateStr = diary.date.toISOString().split('T')[0];
+      // 날짜가 문자열인 경우 직접 사용, 객체인 경우 변환
+      let dateStr: string;
+      if (typeof diary.date === 'string') {
+        dateStr = diary.date;
+      } else if (diary.date instanceof Date) {
+        dateStr = diary.date.toISOString().split('T')[0];
+      } else {
+        // 형식을 알 수 없는 경우 오늘 날짜 사용
+        dateStr = new Date().toISOString().split('T')[0];
+      }
+      
       console.log("일기내용", diary.content);
+      console.log("일기날짜", dateStr);
       
       // 구조화된 콘텐츠가 있으면 그것을 사용하고, 아니면 전체 내용 사용
       const analysisResult = await this.openAiService.analyzeDiary(
@@ -113,6 +125,7 @@ export class DiariesService {
       return analysisResult;
     } catch (error) {
       console.error('분석 오류:', error);
+      console.log('AI 분석 요청 데이터:', diary);
       throw new Error('일기 분석 중 오류가 발생했습니다');
     }
   }
@@ -233,7 +246,17 @@ export class DiariesService {
       diary.structuredContent = structuredContent;
       
       // 5. 누락된 정보 확인 및 완성 상태 업데이트
-      const dateStr = diary.date.toISOString().split('T')[0];
+      // 날짜가 문자열인 경우 직접 사용, 객체인 경우 변환
+      let dateStr: string;
+      if (typeof diary.date === 'string') {
+        dateStr = diary.date;
+      } else if (diary.date instanceof Date) {
+        dateStr = diary.date.toISOString().split('T')[0];
+      } else {
+        // 형식을 알 수 없는 경우 오늘 날짜 사용
+        dateStr = new Date().toISOString().split('T')[0];
+      }
+      
       const updatedText = `오전: ${structuredContent.morning || ''}\n오후: ${structuredContent.afternoon || ''}\n저녁: ${structuredContent.evening || ''}`;
       
       const validationResult = await this.openAiService.collectStructuredDiary(updatedText, dateStr);
