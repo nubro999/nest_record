@@ -30,35 +30,67 @@ export class OpenAiService {
     }
   }
 
-  async collectStructuredDiary(transcript: string, date: string): Promise<any> {
+  async collectStructuredDiary(transcript: string, date: string, conversationHistory?: any[]): Promise<any> {
     try {
+      // Build conversation messages with history if provided
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+        {
+          role: 'system',
+          content: `당신은 일기 작성을 도와주는 AI 비서입니다. 사용자의 일기를 실시간으로 분석하여 아침, 오후, 저녁 시간대별로 구조화하고, 
+          부족한 정보가 있으면 사용자에게 질문해야 합니다. 대화를 통해 모든 정보를 수집한 후에는 그날에 대한 의미 있는 질문을 해주세요.
+
+          당신의 역할:
+          1. 시간대별(아침, 오후, 저녁) 활동을 분석하고 구조화하기
+          2. 부족한 정보가 있으면 구체적인 질문하기 (예: "오전에 무엇을 하셨나요?")
+          3. 모든 시간대 정보가 충분하면 대화를 마무리하고 그날에 대한 의미 있는 질문하기
+          4. 대화 내용과 사용자의 응답을 기록하기
+
+          다음 JSON 형식으로 결과를 반환해주세요:
+          
+          {
+            "structured_content": {
+              "morning": "오전에 있었던 일에 대한 내용",
+              "afternoon": "오후에 있었던 일에 대한 내용",
+              "evening": "저녁에 있었던 일에 대한 내용"
+            },
+            "missing_information": ["부족한 정보1", "부족한 정보2"],
+            "complete": false,
+            "conversation_phase": "collecting_info | asking_question | complete",
+            "next_question": "사용자에게 물어볼 다음 질문",
+            "meaningful_question": "모든 정보가 수집되었을 때 하루에 대한 의미 있는 질문"
+          }
+          
+          conversation_phase는 다음 중 하나여야 합니다:
+          - "collecting_info": 아직 정보 수집 중
+          - "asking_question": 모든 시간대 정보가 수집되어 의미 있는 질문을 하는 단계
+          - "complete": 모든 대화가 완료됨
+
+          정보가 부족한 경우 missing_information에 해당 항목을 포함시키고, next_question에 물어볼 질문을 설정하세요.
+          모든 시간대 정보가 충분하면 conversation_phase를 "asking_question"으로 설정하고 meaningful_question을 포함하세요.
+          모든 대화가, meaningful_question에 대한 응답까지 완료되면 conversation_phase를 "complete"로 설정하세요.`
+        }
+      ];
+
+      // Add conversation history if provided
+      if (conversationHistory && conversationHistory.length > 0) {
+        // Make sure each entry has the correct role type for OpenAI API
+        const typedConversationHistory = conversationHistory.map(msg => ({
+          role: msg.role === 'user' || msg.role === 'assistant' ? msg.role : 'user',
+          content: msg.content
+        } as { role: 'system' | 'user' | 'assistant'; content: string }));
+        
+        messages.push(...typedConversationHistory);
+      }
+
+      // Add the current transcript
+      messages.push({
+        role: 'user',
+        content: transcript
+      } as { role: 'system' | 'user' | 'assistant'; content: string });
+
       const response = await this.openai.chat.completions.create({
         model: 'gpt-4o',
-        messages: [
-          {
-            role: 'system',
-            content: `당신은 일기 작성을 도와주는 AI 비서입니다. 사용자의 음성 일기를 받아서 구조화하고, 
-            필요한 정보가 부족한 경우 무엇이 부족한지 식별해야 합니다. 다음 JSON 형식으로 결과를 반환해주세요:
-            
-            {
-              "structured_content": {
-                "morning": "오전에 있었던 일에 대한 내용",
-                "afternoon": "오후에 있었던 일에 대한 내용",
-                "evening": "저녁에 있었던 일에 대한 내용"
-              },
-              "missing_information": ["부족한 정보1", "부족한 정보2"],
-              "complete": false
-            }
-            
-            만약 모든 정보가 충분하다면 "missing_information"은 빈 배열로, "complete"는 true로 설정하세요.
-            각 시간대(morning, afternoon, evening)에 대한 정보가 없으면 해당 정보를 missing_information에 포함시키세요.
-            일기 내용이 너무 짧거나 구체적이지 않다면 더 상세한 정보를 요청하세요.`
-          },
-          {
-            role: 'user',
-            content: transcript
-          }
-        ],
+        messages,
         response_format: { type: 'json_object' }
       });
 
@@ -73,7 +105,9 @@ export class OpenAiService {
             evening: ""
           },
           missing_information: ["모든 정보"],
-          complete: false
+          complete: false,
+          conversation_phase: "collecting_info",
+          next_question: "오늘 하루 어떻게 보내셨나요? 아침, 오후, 저녁으로 나눠서 말씀해 주시겠어요?"
         };
       }
       
@@ -84,14 +118,14 @@ export class OpenAiService {
     }
   }
 
-  async analyzeDiary(content: string, date?: string, structuredContent?: any): Promise<any> {
+  async analyzeDiary(content: string, date?: string, structuredContent?: any, conversationLog?: any): Promise<any> {
     try {
       console.log('OpenAI 분석 요청:');
       console.log('- 내용:', content?.substring(0, 50) + '...');
       console.log('- 날짜:', date);
       
       // 내용이 없는 경우 기본 값 반환
-      if (!content || content.trim() === '') {
+      if ((!content || content.trim() === '') && (!structuredContent || !Object.values(structuredContent).some(v => v))) {
         console.log('일기 내용이 비어있습니다. 기본 분석 결과 반환');
         return {
           keywords: ["일상"],
@@ -109,42 +143,65 @@ export class OpenAiService {
         };
       }
       
-      // 개발 환경인 경우 또는 API 호출이 실패하더라도 앱이 작동할 수 있도록 모의 데이터 제공
       try {
         // 구조화된 내용이 있는 경우 그것을 사용하고, 아니면 일반 콘텐츠를 시간대별로 분석
         const contentToAnalyze = structuredContent || content;
         
-        // model을 gpt-3.5-turbo로 변경해 볼 수 있음
-        const response = await this.openai.chat.completions.create({
-          model: 'gpt-3.5-turbo', // GPT-4가 실패하면 gpt-3.5-turbo로 시도
-          messages: [
+        let messageContent = '';
+        
+        if (typeof contentToAnalyze === 'string') {
+          messageContent = contentToAnalyze;
+        } else {
+          messageContent = `오전: ${contentToAnalyze.morning || '정보 없음'}\n오후: ${contentToAnalyze.afternoon || '정보 없음'}\n저녁: ${contentToAnalyze.evening || '정보 없음'}`;
+        }
+        
+        // 대화 로그가 있으면 추가
+        if (conversationLog) {
+          messageContent += '\n\n대화 내용:\n' + 
+            (Array.isArray(conversationLog) 
+              ? conversationLog.map(msg => `${msg.role === 'user' ? '사용자' : 'AI'}: ${msg.content}`).join('\n')
+              : typeof conversationLog === 'string' 
+                ? conversationLog
+                : JSON.stringify(conversationLog));
+        }
+
+        const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+          {
+            role: 'system',
+            content: `당신은 일기 분석 전문가입니다. 사용자의 일기와 대화 내용을 종합적으로 분석하여 정확히 다음 JSON 형식으로 결과를 반환해야 합니다:
             {
-              role: 'system',
-              content: `당신은 일기 분석 전문가입니다. 사용자의 일기를 분석하여 정확히 다음 JSON 형식으로 결과를 반환해야 합니다:
-              {
-                "keywords": ["키워드1", "키워드2", "키워드3"], 
-                "summary": {
-                  "morning": "오전에 있었던 일에 대한 요약",
-                  "afternoon": "오후에 있었던 일에 대한 요약",
-                  "evening": "저녁에 있었던 일에 대한 요약"
-                },
-                "question": "사용자에게 물어볼 질문 또는 조언",
-                "feelings": {
-                  "emotion": "주요 감정 (기쁨, 슬픔, 분노, 불안 등)",
-                  "reason": "그 감정을 느낀 이유에 대한 분석"
-                },
-                "date": "${date}"
-              }
-              
-              반드시 위 형식을 정확히 따라야 하며, 추가 텍스트나 설명 없이 JSON 형식만 반환하세요.`
-            },
-            {
-              role: 'user',
-              content: typeof contentToAnalyze === 'string' 
-                ? contentToAnalyze 
-                : `오전: ${contentToAnalyze.morning || ''}\n오후: ${contentToAnalyze.afternoon || ''}\n저녁: ${contentToAnalyze.evening || ''}`
+              "keywords": ["키워드1", "키워드2", "키워드3"], 
+              "summary": {
+                "morning": "오전에 있었던 일에 대한 요약",
+                "afternoon": "오후에 있었던 일에 대한 요약",
+                "evening": "저녁에 있었던 일에 대한 요약"
+              },
+              "question": "하루 마무리 질문에 대한 사용자 응답",
+              "feelings": {
+                "emotion": "주요 감정 (기쁨, 슬픔, 분노, 불안 등)",
+                "reason": "그 감정을 느낀 이유에 대한 분석"
+              },
+              "date": "${date}"
             }
-          ],
+            
+            아래 사항을 반드시 지켜주세요:
+            1. 일기와 대화 내용을 모두 종합하여 분석하세요
+            2. 키워드는 3-5개로 추출하고, 구체적인 활동이나 감정을 나타내는 단어로 선택하세요
+            3. 각 시간대 요약은 간결하게 작성하되, 주요 활동과 감정을 포함해야 합니다
+            4. question 필드에는 사용자가 하루 마무리 질문에 대한 응답을 기록하세요
+            5. 감정 분석은 구체적인 감정과 그 이유를 명확히 파악하세요
+            
+            반드시 위 형식을 정확히 따라야 하며, 추가 텍스트나 설명 없이 JSON 형식만 반환하세요.`
+          },
+          {
+            role: 'user',
+            content: messageContent
+          }
+        ];
+        
+        const response = await this.openai.chat.completions.create({
+          model: 'gpt-4o', // Use gpt-4o for better analysis
+          messages,
           response_format: { type: 'json_object' }
         });
 
@@ -164,7 +221,7 @@ export class OpenAiService {
         return {
           keywords: ["일상", "기록"],
           summary: {
-            morning: content.substring(0, 30) + '...',
+            morning: typeof content === 'string' ? content.substring(0, 30) + '...' : "정보 없음",
             afternoon: "사용자의 일기 내용",
             evening: "사용자의 일기 내용" 
           },

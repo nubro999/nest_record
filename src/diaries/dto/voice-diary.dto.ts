@@ -1,5 +1,5 @@
 // voice-diary.dto.ts
-import { IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsDateString, IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class VoiceDiaryDto {
   @IsDateString()
@@ -12,6 +12,16 @@ export class VoiceDiaryDto {
   @IsString()
   @IsOptional()
   additionalNotes?: string;
+  
+  @IsArray()
+  @IsOptional()
+  conversationHistory?: Array<{role: string, content: string}>;
+}
+
+export enum ConversationPhase {
+  COLLECTING_INFO = 'collecting_info',
+  ASKING_QUESTION = 'asking_question',
+  COMPLETE = 'complete'
 }
 
 export class VoiceDiaryResponseDto {
@@ -25,6 +35,9 @@ export class VoiceDiaryResponseDto {
     afternoon: string;
     evening: string;
   };
+  conversationPhase?: ConversationPhase;
+  nextQuestion?: string;
+  meaningfulQuestion?: string;
 }
 
 export class VoiceDiarySupplementDto {
@@ -32,8 +45,22 @@ export class VoiceDiarySupplementDto {
   diaryId: string;
 
   @IsString()
-  supplementType: 'morning' | 'afternoon' | 'evening' | 'general';
+  @IsEnum(['morning', 'afternoon', 'evening', 'general', 'question_response'])
+  supplementType: 'morning' | 'afternoon' | 'evening' | 'general' | 'question_response';
 
   @IsString()
   content: string;
+  
+  @IsArray()
+  @IsOptional()
+  conversationHistory?: Array<{role: string, content: string}>;
+}
+
+export class DiaryConversationLogDto {
+  @IsArray()
+  messages: Array<{
+    role: 'user' | 'assistant', 
+    content: string, 
+    timestamp?: Date
+  }>;
 }

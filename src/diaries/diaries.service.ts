@@ -4,7 +4,7 @@ import { Repository, DataSource } from 'typeorm';
 import { Diary } from './entities/diary.entity';
 import { CreateDiaryDto } from './dto/create-diary.dto';
 import { UpdateDiaryDto } from './dto/update-diary.dto';
-import { VoiceDiaryDto, VoiceDiaryResponseDto } from './dto/voice-diary.dto';
+import { VoiceDiaryDto, VoiceDiaryResponseDto, ConversationPhase } from './dto/voice-diary.dto';
 import { UsersService } from '../users/users.service';
 import { OpenAiService } from '../openai/openai.service';
 import * as fs from 'fs';
@@ -108,11 +108,22 @@ export class DiariesService {
       console.log("일기내용", diary.content);
       console.log("일기날짜", dateStr);
       
-      // 구조화된 콘텐츠가 있으면 그것을 사용하고, 아니면 전체 내용 사용
+      // 대화 로그가 있으면 로그하기
+      if (diary.conversationLog && diary.conversationLog.length > 0) {
+        console.log(`대화 로그: ${diary.conversationLog.length}개 메시지`);
+      }
+      
+      // 의미 있는 질문에 대한 응답이 있으면 로그하기
+      if (diary.meaningfulAnswer) {
+        console.log(`의미 있는 질문에 대한 응답: ${diary.meaningfulAnswer}`);
+      }
+      
+      // 구조화된 콘텐츠와 대화 로그를 함께 분석
       const analysisResult = await this.openAiService.analyzeDiary(
         diary.content, 
         dateStr,
-        diary.structuredContent
+        diary.structuredContent,
+        diary.conversationLog
       );
       
       // 분석 결과를 diary 객체에 저장
@@ -150,12 +161,33 @@ export class DiariesService {
         };
       }
       
+      // 초기 대화 로그 설정 (사용자 음성 입력)
+      const initialConversationLog: Array<{role: 'user' | 'assistant'; content: string; timestamp: Date}> = [
+        {
+          role: 'user',
+          content: transcript,
+          timestamp: new Date()
+        }
+      ];
+      
       // 3. 텍스트를 구조화된 형식으로 변환 (시간대별 구분)
       const dateStr = voiceDiaryDto.date;
-      const structuredResult = await this.openAiService.collectStructuredDiary(transcript, dateStr);
+      const structuredResult = await this.openAiService.collectStructuredDiary(
+        transcript, 
+        dateStr, 
+        voiceDiaryDto.conversationHistory || []
+      );
+      
+      // AI 응답을 대화 로그에 추가
+      const aiResponse = structuredResult.next_question || '정보를 더 제공해주세요.';
+      initialConversationLog.push({
+        role: 'assistant',
+        content: aiResponse,
+        timestamp: new Date()
+      } as {role: 'user' | 'assistant'; content: string; timestamp: Date});
       
       // 4. 일기 엔티티 생성 및 저장
-      const diary = this.diariesRepository.create({
+      const diaryData = {
         title: voiceDiaryDto.title || `${dateStr} 일기`,
         content: transcript, // 원본 텍스트 저장
         date: new Date(dateStr),
@@ -163,8 +195,19 @@ export class DiariesService {
         audioFilePath,
         structuredContent: structuredResult.structured_content,
         isComplete: structuredResult.complete,
-      });
+        conversationLog: initialConversationLog,
+        conversationPhase: structuredResult.conversation_phase === 'collecting_info' 
+          ? ConversationPhase.COLLECTING_INFO 
+          : structuredResult.conversation_phase === 'asking_question'
+            ? ConversationPhase.ASKING_QUESTION
+            : structuredResult.conversation_phase === 'complete'
+              ? ConversationPhase.COMPLETE
+              : ConversationPhase.COLLECTING_INFO,
+        nextQuestion: structuredResult.next_question || '',
+        meaningfulQuestion: structuredResult.meaningful_question || ''
+      };
       
+      const diary = this.diariesRepository.create(diaryData);
       const savedDiary = await this.diariesRepository.save(diary);
       
       // 5. 응답 반환
@@ -177,6 +220,9 @@ export class DiariesService {
         missingInformation: structuredResult.missing_information,
         complete: structuredResult.complete,
         structuredContent: structuredResult.structured_content,
+        conversationPhase: structuredResult.conversation_phase,
+        nextQuestion: structuredResult.next_question,
+        meaningfulQuestion: structuredResult.meaningful_question
       };
     } catch (error) {
       console.error('음성 일기 처리 중 오류:', error);
@@ -198,9 +244,10 @@ export class DiariesService {
   async supplementVoiceDiary(
     userId: number,
     diaryId: number,
-    supplementType: 'morning' | 'afternoon' | 'evening' | 'general',
+    supplementType: 'morning' | 'afternoon' | 'evening' | 'general' | 'question_response',
     textContent?: string | null,
-    audioFilePath?: string
+    audioFilePath?: string,
+    conversationHistory?: Array<{role: string, content: string}>
   ): Promise<VoiceDiaryResponseDto> {
     // 1. 일기 조회
     const diary = await this.findOne(diaryId, userId);
@@ -225,70 +272,144 @@ export class DiariesService {
         };
       }
       
-      // 3. 기존 구조화된 콘텐츠 복사
-      const structuredContent = diary.structuredContent ? { ...diary.structuredContent } : {
-        morning: '',
-        afternoon: '',
-        evening: '',
-      };
+      // 현재 대화 로그 가져오기
+      const currentConversationLog = diary.conversationLog || [];
       
-      // 4. 해당 시간대 또는 일반 내용 업데이트
-      if (supplementType === 'general') {
-        // 일반적인 내용은 전체 콘텐츠에 추가
-        diary.content = diary.content ? `${diary.content}\n\n추가 정보: ${content}` : content;
-      } else {
-        // 특정 시간대 내용 업데이트
-        structuredContent[supplementType] = structuredContent[supplementType]
-          ? `${structuredContent[supplementType]}\n\n추가 정보: ${content}`
-          : content;
-      }
+      // 사용자 응답 추가
+      currentConversationLog.push({
+        role: 'user',
+        content: content,
+        timestamp: new Date()
+      });
       
-      diary.structuredContent = structuredContent;
-      
-      // 5. 누락된 정보 확인 및 완성 상태 업데이트
-      // 날짜가 문자열인 경우 직접 사용, 객체인 경우 변환
+      // 날짜 문자열 준비
       let dateStr: string;
       if (typeof diary.date === 'string') {
         dateStr = diary.date;
       } else if (diary.date instanceof Date) {
         dateStr = diary.date.toISOString().split('T')[0];
       } else {
-        // 형식을 알 수 없는 경우 오늘 날짜 사용
         dateStr = new Date().toISOString().split('T')[0];
       }
       
-      const updatedText = `오전: ${structuredContent.morning || ''}\n오후: ${structuredContent.afternoon || ''}\n저녁: ${structuredContent.evening || ''}`;
-      
-      const validationResult = await this.openAiService.collectStructuredDiary(updatedText, dateStr);
-      
-      diary.isComplete = validationResult.complete;
-      
-      // 6. 분석 결과 초기화 (내용이 변경되었으므로)
-      diary.isAnalyzed = false;
-      diary.analysis = null;
-      
-      // 7. 저장
-      await this.diariesRepository.save(diary);
-      
-      // 8. 일기가 완성된 경우 분석 수행
-      if (diary.isComplete) {
-        // 비동기로 분석 시작 (응답을 기다리지 않음)
-        this.getAiAnalysis(diary.id, userId).catch(err => 
-          console.error(`일기 ID ${diary.id} 분석 중 오류:`, err)
+      // 의미 있는 질문에 대한 응답인 경우와 기본 정보 보충을 구분
+      if (supplementType === 'question_response') {
+        // 의미 있는 질문에 대한 응답 처리
+        diary.meaningfulAnswer = content;
+        diary.conversationPhase = ConversationPhase.COMPLETE;
+        diary.conversationLog = currentConversationLog;
+        
+        // 모든 정보가 있으므로 분석 단계로 진행
+        diary.isComplete = true;
+        
+        // 저장
+        await this.diariesRepository.save(diary);
+        
+        // 대화 로그를 포함하여 분석 수행
+        const analysisResult = await this.openAiService.analyzeDiary(
+          diary.content,
+          dateStr,
+          diary.structuredContent,
+          diary.conversationLog
         );
+        
+        // 분석 결과 업데이트
+        diary.analysis = analysisResult;
+        diary.isAnalyzed = true;
+        await this.diariesRepository.save(diary);
+        
+        return {
+          success: true,
+          message: '일기와 대화가 완성되었습니다.',
+          diaryId: diary.id,
+          complete: true,
+          structuredContent: diary.structuredContent,
+          conversationPhase: ConversationPhase.COMPLETE
+        };
+      } else {
+        // 3. 기존 구조화된 콘텐츠 복사
+        const structuredContent = diary.structuredContent ? { ...diary.structuredContent } : {
+          morning: '',
+          afternoon: '',
+          evening: '',
+        };
+        
+        // 4. 해당 시간대 또는 일반 내용 업데이트
+        if (supplementType === 'general') {
+          // 일반적인 내용은 전체 콘텐츠에 추가
+          diary.content = diary.content 
+            ? `${diary.content}\n\n추가 정보: ${content}` 
+            : content;
+        } else {
+          // 특정 시간대 내용 업데이트
+          structuredContent[supplementType] = structuredContent[supplementType]
+            ? `${structuredContent[supplementType]}\n\n추가 정보: ${content}`
+            : content;
+        }
+        
+        diary.structuredContent = structuredContent;
+        
+        // 5. 대화 흐름 처리를 위해 업데이트된 전체 내용을 AI에 전달
+        const updatedText = `오전: ${structuredContent.morning || ''}\n오후: ${structuredContent.afternoon || ''}\n저녁: ${structuredContent.evening || ''}`;
+        
+        // 대화 로그 변환 (OpenAI API 형식으로)
+        const formattedConversationLog = currentConversationLog.map(entry => ({
+          role: entry.role === 'user' ? 'user' : 'assistant',
+          content: entry.content
+        }));
+        
+        const validationResult = await this.openAiService.collectStructuredDiary(
+          updatedText, 
+          dateStr,
+          formattedConversationLog
+        );
+        
+        // AI 응답 추가
+        const aiResponse = validationResult.next_question || validationResult.meaningful_question || '정보를 더 제공해주세요.';
+        currentConversationLog.push({
+          role: 'assistant',
+          content: aiResponse,
+          timestamp: new Date()
+        });
+        
+        // 6. 대화 상태 업데이트
+        diary.conversationLog = currentConversationLog;
+        diary.conversationPhase = validationResult.conversation_phase || diary.conversationPhase;
+        diary.isComplete = validationResult.complete;
+        diary.nextQuestion = validationResult.next_question;
+        diary.meaningfulQuestion = validationResult.meaningful_question;
+        
+        // 7. 분석 결과 초기화 (내용이 변경되었으므로)
+        diary.isAnalyzed = false;
+        diary.analysis = null;
+        
+        // 8. 저장
+        await this.diariesRepository.save(diary);
+        
+        // 9. 일기가 완성된 경우(모든 시간대 정보가 있는 경우)만 분석 수행, 의미 있는 질문에 대한 응답을 기다림
+        if (diary.isComplete && diary.conversationPhase === 'complete') {
+          this.getAiAnalysis(diary.id, userId).catch(err => 
+            console.error(`일기 ID ${diary.id} 분석 중 오류:`, err)
+          );
+        }
+        
+        // 10. 응답 반환
+        return {
+          success: true,
+          message: validationResult.conversation_phase === 'asking_question'
+            ? '모든 시간대 정보가 충분합니다. 하루에 대한 질문에 답해주세요.'
+            : validationResult.conversation_phase === 'complete'
+              ? '일기가 완성되었습니다.'
+              : '추가 정보가 저장되었지만 아직 일부 정보가 부족합니다.',
+          diaryId: diary.id,
+          missingInformation: validationResult.missing_information,
+          complete: validationResult.complete,
+          structuredContent: validationResult.structured_content,
+          conversationPhase: validationResult.conversation_phase,
+          nextQuestion: validationResult.next_question,
+          meaningfulQuestion: validationResult.meaningful_question
+        };
       }
-      
-      // 9. 응답 반환
-      return {
-        success: true,
-        message: validationResult.complete
-          ? '일기가 완성되었습니다.'
-          : '추가 정보가 저장되었지만 아직 일부 정보가 부족합니다.',
-        diaryId: diary.id,
-        missingInformation: validationResult.missing_information,
-        complete: validationResult.complete,
-        structuredContent: validationResult.structured_content,
-      };
     } catch (error) {
       console.error('일기 보충 중 오류:', error);
       
@@ -309,17 +430,26 @@ export class DiariesService {
   async getDiaryCompletionStatus(
     userId: number,
     diaryId: number
-  ): Promise<{ complete: boolean; missingInformation: string[] }> {
+  ): Promise<{ 
+    complete: boolean; 
+    missingInformation: string[]; 
+    conversationPhase?: string;
+    nextQuestion?: string;
+    meaningfulQuestion?: string;
+    conversationLog?: any[];
+  }> {
     const diary = await this.findOne(diaryId, userId);
     
     if (!diary) {
       throw new NotFoundException(`ID가 ${diaryId}인 일기를 찾을 수 없습니다.`);
     }
     
-    if (diary.isComplete) {
+    if (diary.conversationPhase === 'complete') {
       return {
         complete: true,
         missingInformation: [],
+        conversationPhase: diary.conversationPhase,
+        conversationLog: diary.conversationLog
       };
     }
     
@@ -345,9 +475,72 @@ export class DiariesService {
       missingInformation.push('evening');
     }
     
+    // 모든 시간대 정보가 있는데 대화 단계가 아직 질문 단계가 아니면 업데이트
+    if (missingInformation.length === 0 && diary.conversationPhase === 'collecting_info') {
+      // 날짜 문자열 준비
+      let dateStr: string;
+      if (typeof diary.date === 'string') {
+        dateStr = diary.date;
+      } else if (diary.date instanceof Date) {
+        dateStr = diary.date.toISOString().split('T')[0];
+      } else {
+        dateStr = new Date().toISOString().split('T')[0];
+      }
+      
+      // 대화 로그 변환
+      const formattedConversationLog = diary.conversationLog ? diary.conversationLog.map(entry => ({
+        role: entry.role === 'user' ? 'user' : 'assistant',
+        content: entry.content
+      })) : [];
+      
+      // 모든 정보가 있으므로 의미 있는 질문 단계로 업데이트
+      const updatedText = `오전: ${structuredContent.morning || ''}\n오후: ${structuredContent.afternoon || ''}\n저녁: ${structuredContent.evening || ''}`;
+      
+      try {
+        const validationResult = await this.openAiService.collectStructuredDiary(
+          updatedText, 
+          dateStr,
+          formattedConversationLog
+        );
+        
+        // 대화 상태 업데이트
+        diary.conversationPhase = ConversationPhase.ASKING_QUESTION;
+        diary.nextQuestion = '';
+        diary.meaningfulQuestion = validationResult.meaningful_question || "오늘 하루를 돌아보면서 어떤 느낌이 드나요?";
+        
+        // AI 응답 추가
+        const currentConversationLog = diary.conversationLog || [];
+        currentConversationLog.push({
+          role: 'assistant',
+          content: diary.meaningfulQuestion,
+          timestamp: new Date()
+        });
+        
+        diary.conversationLog = currentConversationLog;
+        
+        // 저장
+        await this.diariesRepository.save(diary);
+        
+        return {
+          complete: false,
+          missingInformation: [],
+          conversationPhase: diary.conversationPhase,
+          nextQuestion: diary.nextQuestion,
+          meaningfulQuestion: diary.meaningfulQuestion,
+          conversationLog: diary.conversationLog
+        };
+      } catch (error) {
+        console.error('대화 상태 업데이트 중 오류:', error);
+      }
+    }
+    
     return {
-      complete: false,
+      complete: diary.isComplete,
       missingInformation,
+      conversationPhase: diary.conversationPhase,
+      nextQuestion: diary.nextQuestion,
+      meaningfulQuestion: diary.meaningfulQuestion,
+      conversationLog: diary.conversationLog
     };
   }
 

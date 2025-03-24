@@ -11,7 +11,8 @@ import {
   Request, 
   UploadedFile, 
   UseInterceptors,
-  BadRequestException
+  BadRequestException,
+  NotFoundException
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -19,7 +20,7 @@ import { extname } from 'path';
 import { DiariesService } from './diaries.service';
 import { CreateDiaryDto } from './dto/create-diary.dto';
 import { UpdateDiaryDto } from './dto/update-diary.dto';
-import { VoiceDiaryDto, VoiceDiaryResponseDto, VoiceDiarySupplementDto } from './dto/voice-diary.dto';
+import { DiaryConversationLogDto, VoiceDiaryDto, VoiceDiaryResponseDto, VoiceDiarySupplementDto } from './dto/voice-diary.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('diaries')
@@ -133,7 +134,8 @@ export class DiariesController {
         +supplementDto.diaryId, 
         supplementDto.supplementType, 
         null, 
-        file.path
+        file.path,
+        supplementDto.conversationHistory
       );
     } else if (supplementDto.content) {
       console.log(`Supplementing voice diary ${supplementDto.diaryId} with text for user ${userId}`);
@@ -141,11 +143,30 @@ export class DiariesController {
         userId, 
         +supplementDto.diaryId, 
         supplementDto.supplementType, 
-        supplementDto.content
+        supplementDto.content,
+        undefined,
+        supplementDto.conversationHistory
       );
     } else {
       throw new BadRequestException('Either audio file or text content is required');
     }
+  }
+  
+  @Get(':id/conversation')
+  async getDiaryConversation(
+    @Request() req,
+    @Param('id') id: string
+  ): Promise<DiaryConversationLogDto> {
+    const userId = req.user?.id || 1; // Fallback user ID for testing
+    const diary = await this.diariesService.findOne(+id, userId);
+    
+    if (!diary) {
+      throw new NotFoundException(`ID가 ${id}인 일기를 찾을 수 없습니다.`);
+    }
+    
+    return {
+      messages: diary.conversationLog || []
+    };
   }
   
   @Get(':id/completion-status')
