@@ -25,7 +25,7 @@ export class CreateDiaryDto {
   summary: {
     morning: string;
     afternoon: string;
-    night: string;
+    evening: string;
   };
 
   @IsOptional()
