@@ -25,13 +25,6 @@ export class AuthService {
       console.log(`Password from request: ${password.substring(0, 3)}***`);
       console.log(`Stored password hash: ${user.password.substring(0, 10)}***`);
       
-      // For debugging purposes, let's skip password verification for testuser
-      if (username === 'testuser' && password === 'password123') {
-        console.log('DEBUG MODE: Bypassing password check for testuser');
-        const { password: _, ...result } = user;
-        return result;
-      }
-      
       const isPasswordValid = await bcrypt.compare(password, user.password);
       
       if (!isPasswordValid) {

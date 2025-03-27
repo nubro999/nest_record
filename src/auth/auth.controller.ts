@@ -11,24 +11,6 @@ export class AuthController {
     try {
       console.log(`Login attempt: ${loginData.username} with password: ${loginData.password.substring(0, 3)}***`);
       
-      // For testing purposes - allow direct login for testuser
-      if (loginData.username === 'testuser' && loginData.password === 'password123') {
-        console.log('Using direct login for testuser (special case for testing)');
-        
-        // Create a hard-coded test user object for the special case
-        const testUserData = {
-          id: 1,
-          username: 'testuser',
-          email: 'test@example.com'
-        };
-        
-        // Generate token for test user
-        const token = await this.authService.login(testUserData);
-        console.log('Generated token for test user:', token.access_token.substring(0, 20));
-        
-        return token;
-      }
-      
       // Regular validation flow
       const user = await this.authService.validateUser(
         loginData.username,

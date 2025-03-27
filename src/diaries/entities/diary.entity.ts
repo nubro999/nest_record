@@ -1,6 +1,5 @@
 import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
-import { ConversationPhase } from '../dto/voice-diary.dto';
 
 @Entity()
 export class Diary {
@@ -28,10 +27,6 @@ export class Diary {
     evening: string;
   };
 
-  // 음성 파일 경로 저장 (선택사항)
-  @Column({ nullable: true })
-  audioFilePath: string;
-
   // AI 분석 결과를 저장할 필드
   @Column({ type: 'json', nullable: true })
   analysis: any;
@@ -40,25 +35,20 @@ export class Diary {
   @Column({ default: false })
   isAnalyzed: boolean;
 
-  // 일기 완성 여부 (음성 -> 텍스트 -> 구조화 -> 분석 완료 상태)
+  // 일기 완성 여부
   @Column({ default: false })
   isComplete: boolean;
   
   // 대화 로그 저장
   @Column({ type: 'json', nullable: true })
-  conversationLog: Array<{
-    role: 'user' | 'assistant',
-    content: string,
-    timestamp?: Date
-  }>;
+  conversationLog: Array<any>; // Using any to be compatible with different formats
   
   // 대화 단계 (정보 수집 중, 질문 중, 완료)
   @Column({ 
-    type: 'enum', 
-    enum: ConversationPhase, 
-    default: ConversationPhase.COLLECTING_INFO 
+    type: 'varchar',
+    default: 'collecting_info'
   })
-  conversationPhase: ConversationPhase;
+  conversationPhase: string;
   
   // 다음 질문 (AI가 사용자에게 물어볼 다음 질문)
   @Column({ type: 'text', nullable: true })

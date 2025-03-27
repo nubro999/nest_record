@@ -22,7 +22,9 @@ export class UsersService implements OnModuleInit {
       
       if (!testUser) {
         console.log('Creating test user...');
-        // Create a test user for development
+        
+        // Create a test user for development with properly hashed password
+        // Password will be hashed by the create method
         await this.create({
           username: 'testuser',
           email: 'test@example.com',

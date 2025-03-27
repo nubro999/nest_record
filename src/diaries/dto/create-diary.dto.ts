@@ -1,5 +1,5 @@
 // diaries/dto/create-diary.dto.ts
-import { IsString, IsNotEmpty, IsArray, IsObject, IsDateString, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsArray, IsObject, IsDateString, IsOptional, IsBoolean } from 'class-validator';
 
 export class CreateDiaryDto {
   @IsString()
@@ -8,7 +8,7 @@ export class CreateDiaryDto {
 
   @IsString()
   @IsNotEmpty()
-  content: string; // 일기 내용 필드 추가
+  content: string;
 
   @IsDateString()
   date: string;
@@ -17,25 +17,42 @@ export class CreateDiaryDto {
   @IsOptional()
   mood?: string;
 
-  // 기존 필드들...
   @IsArray()
-  keywords: string[];
+  @IsOptional()
+  keywords?: string[];
 
   @IsObject()
-  summary: {
+  @IsOptional()
+  summary?: {
     morning: string;
     afternoon: string;
     evening: string;
   };
 
+  @IsString()
   @IsOptional()
-  question: string;
+  question?: string;
 
   @IsObject()
-  feelings: {
+  @IsOptional()
+  feelings?: {
     emotion: string;
     reason: string;
   };
+  
+  @IsArray()
+  @IsOptional()
+  conversationLog?: Array<any>; // Make it compatible with any conversation log format
+  
+  @IsObject()
+  @IsOptional()
+  structuredContent?: {
+    morning: string;
+    afternoon: string;
+    evening: string;
+  };
+  
+  @IsBoolean()
+  @IsOptional()
+  isAnalyzed?: boolean;
 }
-
-
