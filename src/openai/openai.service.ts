@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fetch from 'node-fetch';
+import { createReadStream } from 'fs';
+import * as FormData from 'form-data';
 import { ConversationLogEntry, DiaryAnalysis, StructuredContent } from '../common/interfaces/diary.interface';
 
 @Injectable()
@@ -168,5 +170,40 @@ export class OpenAiService {
       .sort((a, b) => (b[1] as number) - (a[1] as number))
       .slice(0, 5)
       .map(entry => entry[0]);
+  }
+
+  // Transcribe audio file using Whisper API
+  async transcribeAudio(filePath: string): Promise<string> {
+    try {
+      const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+      
+      if (!apiKey) {
+        throw new Error('OPENAI_API_KEY is not defined in environment variables');
+      }
+      
+      const formData = new FormData();
+      formData.append('file', createReadStream(filePath));
+      formData.append('model', 'whisper-1');
+      
+      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          ...formData.getHeaders(),
+        },
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`OpenAI Whisper API error: ${errorData}`);
+      }
+      
+      const data = await response.json();
+      return data.text;
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      throw new Error('Failed to transcribe audio file');
+    }
   }
 }

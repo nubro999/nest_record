@@ -4,6 +4,7 @@ import { Repository, DataSource } from 'typeorm';
 import { Diary } from './entities/diary.entity';
 import { CreateDiaryDto } from './dto/create-diary.dto';
 import { UpdateDiaryDto } from './dto/update-diary.dto';
+import { VoiceDiaryDto, VoiceDiaryResponseDto, VoiceDiarySupplementDto, ConversationPhase } from './dto/voice-diary.dto';
 import { UsersService } from '../users/users.service';
 import { OpenAiService } from '../openai/openai.service';
 import { DiaryAnalysis } from '../common/interfaces/diary.interface';
@@ -176,6 +177,242 @@ export class DiariesService {
       throw err;
     } finally {
       await queryRunner.release();
+    }
+  }
+
+  async processVoiceDiary(
+    userId: number,
+    file: Express.Multer.File,
+    voiceDiaryDto: VoiceDiaryDto,
+  ): Promise<VoiceDiaryResponseDto> {
+    try {
+      const user = await this.usersService.findOne(userId);
+      
+      // Transcribe the audio file using OpenAI Whisper API
+      const transcribedText = await this.openAiService.transcribeAudio(file.path);
+      
+      if (!transcribedText || transcribedText.trim() === '') {
+        return {
+          success: false,
+          message: 'Transcription failed or returned empty text',
+        };
+      }
+      
+      // Initialize or update conversation history
+      const conversationHistory = voiceDiaryDto.conversationHistory || [];
+      conversationHistory.push({
+        role: 'user',
+        content: transcribedText,
+      } as any); // Cast to any to bypass TypeScript check
+      
+      // Analyze the conversation to structure the diary content
+      const analysis = this.openAiService.analyzeConversationLog(conversationHistory);
+      
+      // Create a diary entity
+      const diary = this.diariesRepository.create({
+        title: voiceDiaryDto.title || `Diary for ${voiceDiaryDto.date}`,
+        date: new Date(voiceDiaryDto.date),
+        content: transcribedText,
+        user,
+        conversationLog: conversationHistory,
+        structuredContent: analysis.structuredContent,
+        isAnalyzed: true,
+        conversationPhase: ConversationPhase.COLLECTING_INFO,
+      } as any);
+      
+      // Check if we have all the required information
+      const missingInformation = [];
+      
+      if (!analysis.structuredContent.morning || analysis.structuredContent.morning.trim() === '') {
+        missingInformation.push('morning');
+      }
+      
+      if (!analysis.structuredContent.afternoon || analysis.structuredContent.afternoon.trim() === '') {
+        missingInformation.push('afternoon');
+      }
+      
+      if (!analysis.structuredContent.evening || analysis.structuredContent.evening.trim() === '') {
+        missingInformation.push('evening');
+      }
+
+      // If we have all the required information, generate a meaningful question
+      let conversationPhase = ConversationPhase.COLLECTING_INFO;
+      let nextQuestion = null;
+      let meaningfulQuestion = null;
+      let isComplete = false;
+      
+      if (missingInformation.length === 0) {
+        conversationPhase = ConversationPhase.ASKING_QUESTION;
+        meaningfulQuestion = '오늘 하루에서 가장 의미 있었던 순간은 무엇인가요?'; // Default question
+        (diary as any).meaningfulQuestion = meaningfulQuestion;
+      } else {
+        // Generate a question to ask for missing information
+        if (missingInformation.includes('morning')) {
+          nextQuestion = '오늘 아침에 무엇을 하셨나요?';
+        } else if (missingInformation.includes('afternoon')) {
+          nextQuestion = '오늘 오후에는 어떤 일들이 있었나요?';
+        } else if (missingInformation.includes('evening')) {
+          nextQuestion = '오늘 저녁에는 무엇을 하셨나요?';
+        }
+        (diary as any).nextQuestion = nextQuestion;
+      }
+      
+      (diary as any).conversationPhase = conversationPhase;
+      (diary as any).isComplete = isComplete;
+      
+      // Save the diary
+      const savedDiary = await this.diariesRepository.save(diary);
+      
+      return {
+        success: true,
+        message: 'Voice diary processed successfully',
+        diaryId: (savedDiary as any).id,
+        missingInformation,
+        complete: isComplete,
+        conversationPhase: conversationPhase as any,
+        nextQuestion,
+        meaningfulQuestion,
+        structuredContent: analysis.structuredContent,
+      };
+    } catch (error) {
+      console.error('Error processing voice diary:', error);
+      return {
+        success: false,
+        message: `Error processing voice diary: ${error.message}`,
+      };
+    }
+  }
+
+  async processVoiceDiarySupplement(
+    userId: number,
+    file: Express.Multer.File,
+    supplementDto: VoiceDiarySupplementDto,
+  ): Promise<VoiceDiaryResponseDto> {
+    try {
+      // Find the diary to supplement
+      const diary = await this.findOne(+supplementDto.diaryId, userId);
+      
+      if (!diary) {
+        return {
+          success: false,
+          message: `Diary with ID ${supplementDto.diaryId} not found`,
+        };
+      }
+      
+      // Transcribe the audio file
+      const transcribedText = await this.openAiService.transcribeAudio(file.path);
+      
+      if (!transcribedText || transcribedText.trim() === '') {
+        return {
+          success: false,
+          message: 'Transcription failed or returned empty text',
+        };
+      }
+      
+      // Update conversation history
+      const conversationHistory = diary.conversationLog || [];
+      conversationHistory.push({
+        role: 'user',
+        content: transcribedText,
+      } as any); // Cast to any to bypass TypeScript check
+      
+      // Update the diary content based on the supplement type
+      const structuredContent = diary.structuredContent || {
+        morning: '',
+        afternoon: '',
+        evening: '',
+      };
+      
+      if (supplementDto.supplementType === 'morning') {
+        structuredContent.morning = transcribedText;
+      } else if (supplementDto.supplementType === 'afternoon') {
+        structuredContent.afternoon = transcribedText;
+      } else if (supplementDto.supplementType === 'evening') {
+        structuredContent.evening = transcribedText;
+      } else if (supplementDto.supplementType === 'question_response') {
+        diary.meaningfulAnswer = transcribedText;
+      } else {
+        // For 'general' type, append to the content
+        diary.content = diary.content 
+          ? `${diary.content}\n\n${transcribedText}`
+          : transcribedText;
+      }
+      
+      // Check if we have all the required information now
+      const missingInformation = [];
+      
+      if (!structuredContent.morning || structuredContent.morning.trim() === '') {
+        missingInformation.push('morning');
+      }
+      
+      if (!structuredContent.afternoon || structuredContent.afternoon.trim() === '') {
+        missingInformation.push('afternoon');
+      }
+      
+      if (!structuredContent.evening || structuredContent.evening.trim() === '') {
+        missingInformation.push('evening');
+      }
+      
+      // Determine the conversation phase and next question
+      let conversationPhase = diary.conversationPhase;
+      let nextQuestion = null;
+      let meaningfulQuestion = diary.meaningfulQuestion;
+      let isComplete = false;
+      
+      // If we have all structural content but no meaningful answer yet
+      if (missingInformation.length === 0 && !diary.meaningfulAnswer) {
+        conversationPhase = ConversationPhase.ASKING_QUESTION;
+        meaningfulQuestion = meaningfulQuestion || '오늘 하루에서 가장 의미 있었던 순간은 무엇인가요?';
+      } 
+      // If we have meaningful answer as well, diary is complete
+      else if (missingInformation.length === 0 && diary.meaningfulAnswer) {
+        conversationPhase = ConversationPhase.COMPLETE;
+        isComplete = true;
+      } 
+      // Still collecting basic info
+      else if (missingInformation.length > 0) {
+        conversationPhase = ConversationPhase.COLLECTING_INFO;
+        if (missingInformation.includes('morning')) {
+          nextQuestion = '오늘 아침에 무엇을 하셨나요?';
+        } else if (missingInformation.includes('afternoon')) {
+          nextQuestion = '오늘 오후에는 어떤 일들이 있었나요?';
+        } else if (missingInformation.includes('evening')) {
+          nextQuestion = '오늘 저녁에는 무엇을 하셨나요?';
+        }
+      }
+      
+      // Update the diary
+      diary.structuredContent = structuredContent;
+      diary.conversationLog = conversationHistory;
+      diary.conversationPhase = conversationPhase;
+      diary.nextQuestion = nextQuestion;
+      diary.meaningfulQuestion = meaningfulQuestion;
+      diary.isComplete = isComplete;
+      
+      // Re-analyze if needed
+      diary.analysis = this.openAiService.analyzeConversationLog(conversationHistory);
+      diary.isAnalyzed = true;
+      
+      // Save the updated diary
+      await this.diariesRepository.save(diary);
+      
+      return {
+        success: true,
+        message: 'Voice diary supplement processed successfully',
+        diaryId: (diary as any).id,
+        missingInformation,
+        complete: isComplete,
+        conversationPhase: conversationPhase as any,
+        nextQuestion,
+        meaningfulQuestion,
+        structuredContent,
+      };
+    } catch (error) {
+      console.error('Error processing voice diary supplement:', error);
+      return {
+        success: false,
+        message: `Error processing voice diary supplement: ${error.message}`,
+      };
     }
   }
 }

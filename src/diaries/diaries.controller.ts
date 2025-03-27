@@ -9,12 +9,18 @@ import {
   Put, 
   UseGuards, 
   Request, 
-  NotFoundException
+  NotFoundException,
+  UseInterceptors,
+  UploadedFile
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 import { DiariesService } from './diaries.service';
 import { CreateDiaryDto } from './dto/create-diary.dto';
 import { UpdateDiaryDto } from './dto/update-diary.dto';
 import { DiaryConversationLogDto } from './dto/realtime-diary.dto';
+import { VoiceDiaryDto, VoiceDiaryResponseDto, VoiceDiarySupplementDto } from './dto/voice-diary.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('diaries')
@@ -77,7 +83,93 @@ export class DiariesController {
     }
     
     return {
-      messages: diary.conversationLog || []
+      messages: (diary.conversationLog || []) as any
     };
+  }
+
+  @Post('voice')
+  @UseInterceptors(
+    FileInterceptor('audio', {
+      storage: diskStorage({
+        destination: './uploads/audio',
+        filename: (req, file, callback) => {
+          const randomName = Array(32)
+            .fill(null)
+            .map(() => Math.round(Math.random() * 16).toString(16))
+            .join('');
+          return callback(null, `${randomName}${extname(file.originalname)}`);
+        },
+      }),
+    }),
+  )
+  async createVoiceDiary(
+    @Request() req,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() voiceDiaryDto: VoiceDiaryDto,
+  ): Promise<VoiceDiaryResponseDto> {
+    try {
+      const userId = req.user?.id || 1; // Fallback user ID for testing
+      
+      if (!file) {
+        return {
+          success: false,
+          message: 'No audio file uploaded',
+        };
+      }
+
+      // Process the voice diary with the uploaded file
+      return this.diariesService.processVoiceDiary(userId, file, voiceDiaryDto);
+    } catch (error) {
+      console.error('Error creating voice diary:', error);
+      return {
+        success: false,
+        message: `Error creating voice diary: ${error.message}`,
+      };
+    }
+  }
+
+  @Post('voice/supplement')
+  @UseInterceptors(
+    FileInterceptor('audio', {
+      storage: diskStorage({
+        destination: './uploads/audio',
+        filename: (req, file, callback) => {
+          const randomName = Array(32)
+            .fill(null)
+            .map(() => Math.round(Math.random() * 16).toString(16))
+            .join('');
+          return callback(null, `${randomName}${extname(file.originalname)}`);
+        },
+      }),
+    }),
+  )
+  async supplementVoiceDiary(
+    @Request() req,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() supplementDto: VoiceDiarySupplementDto,
+  ): Promise<VoiceDiaryResponseDto> {
+    try {
+      const userId = req.user?.id || 1; // Fallback user ID for testing
+      
+      if (!file) {
+        return {
+          success: false,
+          message: 'No audio file uploaded',
+        };
+      }
+
+      // Process the supplementary information
+      return this.diariesService.processVoiceDiarySupplement(
+        userId,
+        file,
+        supplementDto,
+      );
+    } catch (error) {
+      console.error('Error supplementing voice diary:', error);
+      return {
+        success: false,
+        message: `Error supplementing voice diary: ${error.message}`,
+      };
+    }
   }
 }

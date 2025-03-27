@@ -41,14 +41,18 @@ export class Diary {
   
   // 대화 로그 저장
   @Column({ type: 'json', nullable: true })
-  conversationLog: Array<any>; // Using any to be compatible with different formats
+  conversationLog: Array<{
+    role: string;
+    content: string;
+    timestamp?: Date;
+  }>; // Store conversation history with timestamps
   
   // 대화 단계 (정보 수집 중, 질문 중, 완료)
   @Column({ 
     type: 'varchar',
     default: 'collecting_info'
   })
-  conversationPhase: string;
+  conversationPhase: 'collecting_info' | 'asking_question' | 'complete';
   
   // 다음 질문 (AI가 사용자에게 물어볼 다음 질문)
   @Column({ type: 'text', nullable: true })

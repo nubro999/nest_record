@@ -31,7 +31,14 @@ import { AuthModule } from './auth/auth.module';
     }),
     MulterModule.register({
       storage: diskStorage({
-        destination: './uploads',
+        destination: (req, file, callback) => {
+          // Store audio files in ./uploads/audio
+          if (file.mimetype.startsWith('audio/')) {
+            callback(null, './uploads/audio');
+          } else {
+            callback(null, './uploads');
+          }
+        },
         filename: (req, file, callback) => {
           const randomName = Array(32)
             .fill(null)
@@ -40,6 +47,19 @@ import { AuthModule } from './auth/auth.module';
           return callback(null, `${randomName}${extname(file.originalname)}`);
         },
       }),
+      fileFilter: (req, file, callback) => {
+        // Accept audio files and other allowed types
+        if (file.mimetype.startsWith('audio/') || 
+            file.mimetype.startsWith('image/') ||
+            file.mimetype === 'application/octet-stream') { // For binary data
+          callback(null, true);
+        } else {
+          callback(new Error('Unsupported file type'), false);
+        }
+      },
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB limit
+      },
     }),
     UsersModule,
     DiariesModule,
